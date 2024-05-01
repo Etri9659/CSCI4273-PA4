@@ -49,13 +49,16 @@ typedef struct {
 
 Server servers[MAX_SERVERS];
 int numServer = 0;
-char runningServers[4];
+char runningServers[4][MAX_FILENAME_LENGTH];
+char runningSockfd[4];
 
 void readSConfig();
 void connectServers();
 void listFunc();
 void getFunc(char *fName);
 void putFunc(char *fName);
+void sendChunk(char* chunk, char* fname, char chunkChar, int dfsIdx, size_t len);
+int sendtoDFS(char* msg, size_t len);
 
 int main(int argc, char *argv[]) {
     if(argc < 2){
@@ -66,24 +69,28 @@ int main(int argc, char *argv[]) {
     readSConfig();
     connectServers();
 
-    if (strcmp(argv[1], "list") == 0) {
-        listFunc();
-    } else if (strcmp(argv[1], "get") == 0) {
-        if (argc < 3) {
-            printf("Usage: %s get [filename]\n", argv[0]);
+    while(1){
+        if (strcmp(argv[1], "list") == 0) {
+            listFunc();
+        } else if (strcmp(argv[1], "get") == 0) {
+            if (argc < 3) {
+                printf("Usage: %s get [filename]\n", argv[0]);
+                return 1;
+            }
+            getFunc(argv[2]);
+        } else if (strcmp(argv[1], "put") == 0) {
+            if (argc < 3) {
+                printf("Usage: %s put [filename]\n", argv[0]);
+                return 1;
+            }
+            putFunc(argv[2]);
+        } else {
+            printf("Invalid command.\n");
             return 1;
         }
-        getFunc(argv[2]);
-    } else if (strcmp(argv[1], "put") == 0) {
-        if (argc < 3) {
-            printf("Usage: %s put [filename]\n", argv[0]);
-            return 1;
-        }
-        putFunc(argv[2]);
-    } else {
-        printf("Invalid command.\n");
-        return 1;
     }
+
+    
 
     return 0;
 }
@@ -157,18 +164,73 @@ void connectServers(){
             continue;
         }
 
-        //printf("Connected to server %s:%d\n", servers[i].ip, servers[i].port);
-        runningServers[i] = servers[i].name;
+        printf("Connected to server %s:%d\n", servers[i].ip, servers[i].port);
+        strcpy(runningServers[i], servers[i].name);
+        runningSockfd[i] = sockfd;
     }
     return;
 }
 
 void listFunc(){
-
+    sendtoDFS("list", BUFSIZE);
 }
 void getFunc(char *fName){
 
 }
 void putFunc(char *fName){
+    size_t fsize;
 
+    FILE *f = fopen(fName, "rb");
+    if(f == NULL){
+        perror("ERROR requested put file does not exist");
+        fclose(f);
+        return;
+    }
+
+    /*Calculate file size*/
+    fseek(f, 0, SEEK_END);
+    fsize = ftell(f);
+    rewind(f);
+
+    /*Split files into 4 chunks*/
+    char p1[fsize/4];
+    char p2[fsize/4];
+    char p3[fsize/4];
+    char p4[fsize - 3*(fsize/4)];
+
+    /*Read files into the 4 chunks*/
+    fread(p1, sizeof(p1), 1, f);
+    fread(p2, sizeof(p2), 1, f);
+    fread(p3, sizeof(p3), 1, f);
+    fread(p4, sizeof(p4), 1, f);
+
+    /*Implement send chunk and hashing*/
 }
+
+void sendChunk(char* chunk, char* fname, char chunkChar, int dfsIdx, size_t len){
+    char fsize[BUFSIZE];
+    sprintf(fsize, "%d", (int)len);
+
+    char msg[strlen(fname) + strlen("put ") + strlen(fsize) + 5];
+
+    strcpy(msg, "put");
+    strcat(msg, fsize);
+    strcat(msg, " ");
+    strcat(msg, fname);
+    strncat(msg, &chunkChar, 1);
+
+    sendtoDFS(msg, strlen(msg) + 1);
+}
+
+int sendtoDFS(char* msg, size_t len){
+    int n;
+
+    for(int i = 0; i < numServer; i++){
+        n = write(runningSockfd[i], msg, len);
+        if(n < 0){
+            printf("Error in sendto: errno %d\n", errno);
+        }
+    }
+    return n;
+}
+
